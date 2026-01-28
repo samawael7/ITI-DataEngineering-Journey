@@ -1,0 +1,13 @@
+{
+    "numbers": {
+        "size": 3,
+        "items": []
+    },
+    "letters": {
+        "size": 2,
+        "items": [
+            "a",
+            "b"
+        ]
+    }
+}

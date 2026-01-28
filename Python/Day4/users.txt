@@ -1,0 +1,4 @@
+name = sama
+ age = 22
+ email = sama@gmail.com
+ track = data
