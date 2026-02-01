@@ -68,6 +68,8 @@ END;
 SELECT dbo.CheckStudentName(1)
 
 
+
+--5 needs checkking
 CREATE FUNCTION dbo.GetManagerInfo (@MgrID INT)
 RETURNS TABLE
 AS
