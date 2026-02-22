@@ -3,11 +3,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>Docker Game by Samsoma</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            backdrop-filter: blur(10px);
+            max-width: 400px;
+        }
+        h1 {
+            margin-bottom: 20px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        input {
+            padding: 15px;
+            font-size: 1.2em;
+            border: none;
+            border-radius: 10px;
+            width: 80%;
+            margin: 20px 0;
+            text-align: center;
+        }
+        button {
+            padding: 15px 40px;
+            font-size: 1.2em;
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #ff5252;
+            transform: scale(1.05);
+        }
+        #message {
+            margin-top: 20px;
+            font-size: 1.5em;
+            min-height: 40px;
+            font-weight: bold;
+        }
+        .emoji {
+            font-size: 3em;
+            margin: 20px 0;
+        }
+    </style>
 </head>
 <body>
-    <h1>
-        hello samsoma
-    </h1>
+    <div class="container">
+        <h1>Guess the Number!</h1>
+        <p>I'm thinking of a number between 1 and 100</p>
+        <p>Dockerized by Samsoma 🐳</p>
+        <div class="emoji" id="emoji">🤔</div>
+        <input type="number" id="guess" placeholder="Enter your guess" min="1" max="100">
+        <br>
+        <button onclick="checkGuess()">Guess!</button>
+        <div id="message"></div>
+        <p id="attempts">Attempts: 0</p>
+    </div>
+
+    <script>
+        let randomNumber = Math.floor(Math.random() * 100) + 1;
+        let attempts = 0;
+
+        function checkGuess() {
+            const guess = parseInt(document.getElementById('guess').value);
+            const message = document.getElementById('message');
+            const emoji = document.getElementById('emoji');
+            const attemptsDisplay = document.getElementById('attempts');
+            
+            if (!guess || guess < 1 || guess > 100) {
+                message.textContent = 'Please enter a valid number!';
+                message.style.color = '#ffeb3b';
+                return;
+            }
+
+            attempts++;
+            attemptsDisplay.textContent = `Attempts: ${attempts}`;
+
+            if (guess === randomNumber) {
+                message.textContent = `🎉 YES! You got it in ${attempts} tries!`;
+                message.style.color = '#4caf50';
+                emoji.textContent = '🎉';
+                document.querySelector('button').textContent = 'Play Again';
+                document.querySelector('button').onclick = resetGame;
+            } else if (guess < randomNumber) {
+                message.textContent = '📈 Too low! Go higher!';
+                message.style.color = '#2196f3';
+                emoji.textContent = '⬆️';
+            } else {
+                message.textContent = '📉 Too high! Go lower!';
+                message.style.color = '#ff9800';
+                emoji.textContent = '⬇️';
+            }
+        }
+
+        function resetGame() {
+            randomNumber = Math.floor(Math.random() * 100) + 1;
+            attempts = 0;
+            document.getElementById('guess').value = '';
+            document.getElementById('message').textContent = '';
+            document.getElementById('attempts').textContent = 'Attempts: 0';
+            document.getElementById('emoji').textContent = '🤔';
+            document.querySelector('button').textContent = 'Guess!';
+            document.querySelector('button').onclick = checkGuess;
+        }
+
+        document.getElementById('guess').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') checkGuess();
+        });
+    </script>
 </body>
 </html>
