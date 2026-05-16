@@ -1,0 +1,346 @@
+---
+#####################################################
+#### KAFKA FOR DEVELOPERS WORKSHOP                ###
+#### docker compose -f dc.yaml up -d              ###
+####                                               ###
+#### Lab → Service mapping:                        ###
+####   CLI + Producer/Consumer  → broker, kafka-ui ###
+####   Schema Registry          → + schema-registry###
+####   REST Proxy               → + rest-proxy     ###
+####   Kafka Connect            → + connect        ###
+####   CDC (Debezium)           → + connect, mysql  ###
+####   Monitoring               → + prometheus,     ###
+####                               grafana          ###
+#####################################################
+services:
+
+  broker:
+    image: confluentinc/cp-kafka:7.6.1
+    hostname: broker
+    container_name: broker
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+      - "1234:1234"
+    healthcheck:
+      # Use the admin API (no JMX agent conflict) to verify broker is ready
+      test: ["CMD-SHELL", "kafka-metadata.sh --snapshot /tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log --cluster-id MkU3OEVBNTcwNTJENDM2Qk || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      # KAFKA_AUTO_CREATE_TOPICS_ENABLE: false
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://broker:29092,CONTROLLER://broker:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      # JMX exporter agent - exposes Prometheus metrics on port 1234
+      # NOTE: when running CLI commands via docker exec, override this to avoid BindException:
+      #   docker exec -e KAFKA_OPTS="" broker kafka-topics --list --bootstrap-server broker:9092
+      KAFKA_OPTS: -javaagent:/tmp/jmx/jmx_prometheus_javaagent.jar=1234:/tmp/jmx/broker.yml
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: "3g"
+        reservations:
+          cpus: '0.5'
+          memory: "2g"
+    volumes:
+      - ./jmx-exporter:/tmp/jmx/
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_JMX_OPTS: -javaagent:/tmp/jmx/jmx_prometheus_javaagent.jar=1234:/tmp/jmx/schema-registry.yml
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: "1g"
+        reservations:
+          cpus: '0.5'
+          memory: "1g"
+    volumes:
+      - ./jmx-exporter:/tmp/jmx/
+
+  rest-proxy:
+    image: confluentinc/cp-kafka-rest:7.6.1
+    hostname: rest-proxy
+    container_name: rest-proxy
+    depends_on:
+      broker:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    environment:
+      KAFKA_REST_HOST_NAME: rest-proxy
+      KAFKA_REST_BOOTSTRAP_SERVERS: 'broker:29092'
+      KAFKA_REST_LISTENERS: "http://0.0.0.0:8082"
+      KAFKA_REST_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: "1g"
+        reservations:
+          cpus: '0.5'
+          memory: "1g"
+
+  connect:
+    image: confluentinc/cp-kafka-connect:7.6.1
+    hostname: connect
+    container_name: connect
+    depends_on:
+      broker:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+      - "1235:1234"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_CONFIG_STORAGE_CLEANUP_POLICY: compact
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_CLEANUP_POLICY: compact
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_CLEANUP_POLICY: compact
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CLASSPATH: /usr/share/java/monitoring-interceptors/monitoring-interceptors-7.6.1.jar
+      CONNECT_PRODUCER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor"
+      CONNECT_CONSUMER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor"
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components,/tmp/ext-plugins"
+      CONNECT_LOG4J_LOGGERS: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR
+      CONNECT_PRODUCER_MAX_REQUEST_SIZE: 2097152
+      KAFKA_JMX_PORT: 9999
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_JMX_OPTS: -javaagent:/tmp/jmx/jmx_prometheus_javaagent.jar=1234:/tmp/jmx/connect.yml -Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: "3g"
+        reservations:
+          cpus: '1'
+          memory: "3g"
+    volumes:
+      - ./plugins:/tmp/ext-plugins
+      - ./misc:/tmp/misc
+      - ./spool:/tmp/spool
+      - ./config:/tmp/config
+      - ./jmx-exporter:/tmp/jmx/
+
+  ksqldb-server:
+    image: confluentinc/cp-ksqldb-server:7.6.1
+    hostname: ksqldb-server
+    container_name: ksqldb-server
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      - "8088:8088"
+    environment:
+      KSQL_CONFIG_DIR: "/etc/ksql"
+      KSQL_BOOTSTRAP_SERVERS: "broker:29092"
+      KSQL_HOST_NAME: ksqldb-server
+      KSQL_LISTENERS: "http://0.0.0.0:8088"
+      KSQL_CACHE_MAX_BYTES_BUFFERING: 0
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      KSQL_PRODUCER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor"
+      KSQL_CONSUMER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor"
+      KSQL_KSQL_CONNECT_URL: "http://connect:8083"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_REPLICATION_FACTOR: 1
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: 'true'
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: 'true'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: "2g"
+        reservations:
+          cpus: '0.5'
+          memory: "2g"
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8090:8080
+    depends_on:
+      broker:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: broker:29092
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: "1g"
+        reservations:
+          cpus: '0.5'
+          memory: "1g"
+
+  #####################################################
+  #### CDC LAB — uncomment for Debezium exercises   ###
+  #### NOTE: connector config uses hostname "mysql" ###
+  #####################################################
+  # mysql:
+  #   image: mysql:8.0.29
+  #   container_name: mysql
+  #   hostname: mysql
+  #   restart: always
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: root
+  #     MYSQL_DATABASE: ecomm
+  #     MYSQL_USER: myuser
+  #     MYSQL_PASSWORD: mypassword
+  #   ports:
+  #     - 3305:3306
+  #   command: --server-id=1 --log-bin=mysql-bin --binlog-format=ROW --binlog-row-image=FULL --expire-logs-days=3
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.5'
+  #         memory: "1g"
+  #       reservations:
+  #         cpus: '0.5'
+  #         memory: "1g"
+
+  # postgres:
+  #   image: postgres:14-alpine
+  #   container_name: postgres
+  #   ports:
+  #     - 5432:5432
+  #   environment:
+  #     - POSTGRES_PASSWORD=password
+  #     - POSTGRES_USER=admin
+  #     - POSTGRES_DB=admin
+  #   command: ["postgres", "-c", "wal_level=logical"]
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+
+  # mongodb:
+  #   image: mongo:latest
+  #   container_name: mongodb
+  #   restart: always
+  #   command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+  #   ports:
+  #     - "27018:27017"
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #     - ./keyfile/mongo-keyfile:/etc/mongo-keyfile:ro
+
+  # mongo-express:
+  #   image: mongo-express:1.0.0-alpha.4
+  #   container_name: mongo-express
+  #   ports:
+  #     - "9081:9081"
+  #   environment:
+  #     ME_CONFIG_MONGODB_SERVER: mongodb
+  #     ME_CONFIG_MONGODB_PORT: 27017
+  #     ME_CONFIG_MONGODB_ADMINUSERNAME: root
+  #     ME_CONFIG_MONGODB_ADMINPASSWORD: example
+  #     ME_CONFIG_MONGODB_AUTH_DATABASE: admin
+  #     ME_CONFIG_BASICAUTH_USERNAME: admin
+  #     ME_CONFIG_BASICAUTH_PASSWORD: admin123
+  #   depends_on:
+  #     - mongodb
+
+  # kafkacat:
+  #   image: edenhill/kafkacat:1.7.0-PRE1
+  #   container_name: kafkacat
+  #   entrypoint:
+  #     - /bin/sh
+  #     - -c
+  #     - |
+  #       apk add jq;
+  #       while [ 1 -eq 1 ];do sleep 60;done
+
+  #####################################################
+  #### MONITORING — uncomment for monitoring lab    ###
+  #####################################################
+  # prometheus:
+  #   image: prom/prometheus:v2.47.2
+  #   container_name: prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./prometheus:/etc/prometheus
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.5'
+  #         memory: "1g"
+  #       reservations:
+  #         cpus: '0.5'
+  #         memory: "1g"
+
+  # alertmanager:
+  #   image: prom/alertmanager:v0.26.0
+  #   container_name: alertmanager
+  #   ports:
+  #     - "19093:9093"
+
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: grafana
+  #   ports:
+  #     - "3000:3000"
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.5'
+  #         memory: "1g"
+  #       reservations:
+  #         cpus: '0.5'
+  #         memory: "1g"
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #     - ./grafana/provisioning:/etc/grafana/provisioning
+
+volumes:
+  grafana-data:
+  pg_data:
+  mongodb_data:
